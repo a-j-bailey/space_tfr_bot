@@ -1,0 +1,18 @@
+name = "tfr-parser"
+main = "index.js"
+compatibility_date = "2023-01-01"
+
+[[kv_namespaces]]
+binding = "TFR_STORAGE"
+id = "79af157b84b74a4bb470121b47662009"
+preview_id = "ed751672a0944036a43ed626f7388a67"
+
+[build]
+command = ""
+
+[triggers]
+crons = ["*/30 * * * *"]  # Runs every 30 minutes
+
+[vars]
+# Environment variables will be loaded from .dev.vars for local development
+# and from Cloudflare dashboard for production

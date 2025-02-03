@@ -2,7 +2,6 @@
 .dev.vars
 .wrangler/
 .env
-.dev.vars
 
 # Node
 node_modules/
@@ -29,7 +28,3 @@ yarn-error.log*
 # wrangler local state
 .wrangler/
 .mf/
-
-# Local development
-.dev.vars
-wrangler.toml 

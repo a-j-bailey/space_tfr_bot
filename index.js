@@ -374,6 +374,24 @@ export default {
 	 * @returns {Promise<Response>}
 	 */
 	async fetch(request, env, ctx) {
+		return this.processTfrs(env);
+	},
+
+	/**
+	 * @param {ScheduledController} controller
+	 * @param {Env} env
+	 * @param {ExecutionContext} ctx
+	 */
+	async scheduled(controller, env, ctx) {
+		// This runs on the cron schedule
+		await this.processTfrs(env);
+	},
+
+	/**
+	 * @param {Env} env
+	 * @returns {Promise<Response>}
+	 */
+	async processTfrs(env) {
 		// Add CORS headers to all responses
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
