@@ -323,7 +323,7 @@ async function postTweet(tfr, env) {
 function formatTfrTweet(tfr) {
 	return `New Space Operations TFR:
 📍 ${tfr.location}
-🗓️ ${tfr.beginningDateTime} to ${tfr.endingDateTime}
+🗓️ ${new Date(tfr.beginningDateTime).toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: 'numeric', minute: 'numeric', hour12: false })} UTC to ${new Date(tfr.endingDateTime).toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: 'numeric', minute: 'numeric', hour12: false })} UTC
 --
 ${tfr.description}
 --
