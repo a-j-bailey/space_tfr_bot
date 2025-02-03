@@ -124,8 +124,143 @@ class CoordinatesParser {
 	}
 }
 
+async function getTwitterAccessToken(env) {
+	try {
+		const credentials = `${env.TWITTER_CLIENT_ID}:${env.TWITTER_CLIENT_SECRET}`;
+		const basicAuth = btoa(credentials);
+		
+		const response = await fetch('https://api.twitter.com/2/oauth2/token', {
+			method: 'POST',
+			headers: {
+				'Authorization': `Basic ${basicAuth}`,
+				'Content-Type': 'application/x-www-form-urlencoded'
+			},
+			body: 'grant_type=client_credentials'
+		});
+
+		if (!response.ok) {
+			throw new Error(`OAuth error: ${await response.text()}`);
+		}
+
+		const data = await response.json();
+		return data.access_token;
+	} catch (error) {
+		console.error('Error getting Twitter access token:', error);
+		throw error;
+	}
+}
+
+async function generateOAuthSignature(method, url, params, consumerSecret, tokenSecret) {
+	const baseString = [
+		method.toUpperCase(),
+		encodeURIComponent(url),
+		encodeURIComponent(Object.keys(params)
+			.sort()
+			.map(key => `${key}=${params[key]}`)
+			.join('&'))
+	].join('&');
+
+	const signingKey = `${encodeURIComponent(consumerSecret)}&${encodeURIComponent(tokenSecret)}`;
+	
+	// Convert strings to Uint8Arrays
+	const encoder = new TextEncoder();
+	const baseStringBytes = encoder.encode(baseString);
+	const signingKeyBytes = encoder.encode(signingKey);
+	
+	// Create HMAC key
+	const key = await crypto.subtle.importKey(
+		'raw',
+		signingKeyBytes,
+		{ name: 'HMAC', hash: 'SHA-1' },
+		false,
+		['sign']
+	);
+	
+	// Sign the base string
+	const signature = await crypto.subtle.sign(
+		'HMAC',
+		key,
+		baseStringBytes
+	);
+	
+	// Convert to base64
+	return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+async function postTweet(tfr, env) {
+	const tweetText = formatTfrTweet(tfr);
+	console.log('Attempting to post tweet:', tweetText);
+	
+	try {
+		const url = 'https://api.twitter.com/2/tweets';
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		const nonce = Math.random().toString(36).substring(2);
+
+		const oauthParams = {
+			oauth_consumer_key: env.TWITTER_API_KEY,
+			oauth_nonce: nonce,
+			oauth_signature_method: 'HMAC-SHA1',
+			oauth_timestamp: timestamp,
+			oauth_token: env.TWITTER_ACCESS_TOKEN,
+			oauth_version: '1.0'
+		};
+
+		const signature = await generateOAuthSignature(
+			'POST',
+			url,
+			oauthParams,
+			env.TWITTER_API_SECRET,
+			env.TWITTER_ACCESS_TOKEN_SECRET
+		);
+
+		const authHeader = 'OAuth ' + Object.entries({
+			...oauthParams,
+			oauth_signature: signature
+		})
+			.map(([key, value]) => `${key}="${encodeURIComponent(value)}"`)
+			.join(', ');
+
+		const response = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Authorization': authHeader,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				text: tweetText
+			})
+		});
+
+		const responseText = await response.text();
+		console.log('Twitter API response status:', response.status);
+		console.log('Twitter API response:', responseText);
+
+		if (!response.ok) {
+			throw new Error(`Twitter API error: ${responseText}`);
+		}
+
+		console.log('Tweet posted successfully for TFR:', tfr.notam);
+		return true;
+	} catch (error) {
+		console.error('Error posting tweet:', error);
+		console.error('Error details:', error.message);
+		return false;
+	}
+}
+
+function formatTfrTweet(tfr) {
+	// Format the TFR info into a tweet
+	const date = new Date(tfr.date).toLocaleDateString();
+	return `New Space Operations TFR:
+📍 ${tfr.state} - ${tfr.facility}
+🗓️ ${tfr.description}
+NOTAM: ${tfr.notam}
+More info: ${tfr.url}`;
+}
+
 async function updateTfrJson(newTfrs, env) {
 	let existingTfrs = [];
+	let addedTfrs = [];
 	try {
 		const stored = await env.TFR_STORAGE.get('tfrs', { type: 'json' });
 		console.log('Retrieved from KV:', stored ? stored.length : 0, 'TFRs');
@@ -139,8 +274,11 @@ async function updateTfrJson(newTfrs, env) {
 	for (const newTfr of newTfrs) {
 		const existingIndex = mergedTfrs.findIndex(tfr => tfr.notam === newTfr.notam);
 		if (existingIndex === -1) {
+			// This is a new TFR
 			mergedTfrs.push(newTfr);
+			addedTfrs.push(newTfr);
 		} else {
+			// Update existing TFR but don't count as new
 			mergedTfrs[existingIndex] = newTfr;
 		}
 	}
@@ -148,10 +286,12 @@ async function updateTfrJson(newTfrs, env) {
 	try {
 		await env.TFR_STORAGE.put('tfrs', JSON.stringify(mergedTfrs));
 		console.log('Stored in KV:', mergedTfrs.length, 'TFRs');
+		console.log('New TFRs found:', addedTfrs.length);
 	} catch (error) {
 		console.error('Error writing to KV:', error);
 	}
-	return mergedTfrs;
+
+	return addedTfrs;  // Only return the new TFRs
 }
 
 export default {
@@ -214,28 +354,44 @@ export default {
 
 			const updatedTfrs = await updateTfrJson(tableParser.tfrs, env);
 			
-			// Set CORS headers to allow access from any origin
-			const headers = new Headers({
-				'Access-Control-Allow-Origin': '*',
-				'Content-Type': 'application/json'
-			});
+			// If no new TFRs, return early
+			if (updatedTfrs.length === 0) {
+				return Response.json({
+					success: true,
+					data: {
+						message: "No new TFRs found",
+						tweetsPosted: 0
+					}
+				});
+			}
+
+			// Post tweets for each new TFR
+			const tweetResults = [];
+			for (const tfr of updatedTfrs) {
+				const tweetText = formatTfrTweet(tfr);
+				const success = await postTweet(tfr, env);
+				if (success) {
+					tweetResults.push({
+						notam: tfr.notam,
+						tweetText: tweetText,
+						success: true
+					});
+				}
+			}
 
 			return Response.json({
 				success: true,
-				data: updatedTfrs
-			}, { headers });
+				data: {
+					message: `Posted ${tweetResults.length} tweets`,
+					tweets: tweetResults
+				}
+			});
 
 		} catch (error) {
 			return Response.json({
 				success: false,
 				error: error.message
-			}, { 
-				status: 500,
-				headers: {
-					'Access-Control-Allow-Origin': '*',
-					'Content-Type': 'application/json'
-				}
-			});
+			}, { status: 500 });
 		}
 	},
 };
