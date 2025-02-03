@@ -124,6 +124,78 @@ class CoordinatesParser {
 	}
 }
 
+class TfrDetailsParser {
+	constructor() {
+		this.details = {
+			issueDate: '',
+			location: '',
+			beginningDateTime: '',
+			endingDateTime: '',
+			reason: '',
+			coordinates: [],
+			altitude: '',
+			authority: '',
+			artcc: '',
+			effectiveTimes: '',
+			notamNumber: ''
+		};
+	}
+
+	async parse(xmlText) {
+		const getValue = (tag) => {
+			const match = xmlText.match(new RegExp(`<${tag}>([^<]+)</${tag}>`));
+			return match ? match[1].trim() : '';
+		};
+
+		// Basic NOTAM details
+		this.details.notamNumber = `FDC ${getValue('txtLocalName')}`;
+		this.details.issueDate = getValue('dateIssued');
+		
+		// Location details
+		const city = getValue('txtNameCity');
+		const state = getValue('txtNameUSState');
+		this.details.location = `${city}, ${state}`;
+		
+		// Times
+		this.details.beginningDateTime = getValue('dateEffective');
+		this.details.endingDateTime = getValue('dateExpire');
+		
+		// Altitude
+		const upperAlt = getValue('valDistVerUpper');
+		const lowerAlt = getValue('valDistVerLower');
+		this.details.altitude = `${lowerAlt}ft to FL${upperAlt}`;
+
+		// Authority and facility
+		this.details.authority = getValue('codeType'); // Usually "91.143" for space ops
+		this.details.artcc = getValue('codeFacility');
+		
+		// Daily operation times
+		const scheduleMatch = xmlText.match(/<ScheduleGroup>[\s\S]*?<\/ScheduleGroup>/);
+		if (scheduleMatch) {
+			const startTime = scheduleMatch[0].match(/<startTime>([^<]+)<\/startTime>/)?.[1];
+			const endTime = scheduleMatch[0].match(/<endTime>([^<]+)<\/endTime>/)?.[1];
+			this.details.effectiveTimes = `${startTime} to ${endTime} UTC daily`;
+		}
+
+		// Extract coordinates from Avx tags
+		const coords = [];
+		const avxMatches = xmlText.match(/<Avx>[\s\S]*?<\/Avx>/g) || [];
+		
+		avxMatches.forEach(avx => {
+			const lat = avx.match(/<geoLat>([^<]+)<\/geoLat>/)?.[1];
+			const long = avx.match(/<geoLong>([^<]+)<\/geoLong>/)?.[1];
+			if (lat && long) {
+				// Convert decimal coordinates to degrees format
+				coords.push({ lat, long });
+			}
+		});
+		
+		this.details.coordinates = coords;
+
+		return this.details;
+	}
+}
+
 async function getTwitterAccessToken(env) {
 	try {
 		const credentials = `${env.TWITTER_CLIENT_ID}:${env.TWITTER_CLIENT_SECRET}`;
@@ -249,15 +321,13 @@ async function postTweet(tfr, env) {
 }
 
 function formatTfrTweet(tfr) {
-	// Format the TFR info into a tweet
-	const date = new Date(tfr.date).toLocaleDateString();
 	return `New Space Operations TFR:
-    🗓️ ${tfr.date}
-    📍 ${tfr.state} - ${tfr.facility}
-    --
-    ${tfr.description}
-    --
-    ${tfr.url}`;
+📍 ${tfr.location}
+🗓️ ${tfr.beginningDateTime} to ${tfr.endingDateTime}
+--
+${tfr.description}
+--
+${tfr.url}`;
 }
 
 async function updateTfrJson(newTfrs, env) {
@@ -304,6 +374,20 @@ export default {
 	 * @returns {Promise<Response>}
 	 */
 	async fetch(request, env, ctx) {
+		// Add CORS headers to all responses
+		const corsHeaders = {
+			'Access-Control-Allow-Origin': '*',
+			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+			'Access-Control-Allow-Headers': 'Content-Type',
+		};
+
+		// Handle OPTIONS request for CORS
+		if (request.method === 'OPTIONS') {
+			return new Response(null, {
+				headers: corsHeaders
+			});
+		}
+
 		try {
 			// Check if we want stored TFRs only
 			if (request.url.endsWith('/stored')) {
@@ -311,6 +395,8 @@ export default {
 				return Response.json({
 					success: true,
 					data: stored || []
+				}, {
+					headers: corsHeaders
 				});
 			}
 
@@ -335,22 +421,29 @@ export default {
 			});
 
 			const fetchPromises = Array.from(urlMap.keys()).map(async url => {
-				const detailResponse = await fetch(url);
-				const detailHtml = await detailResponse.text();
+				const xmlUrl = url.replace('.html', '.xml');
+				const response = await fetch(xmlUrl);
+				const xmlText = await response.text();
 
-				const coordParser = new CoordinatesParser();
-				const detailRewriter = new HTMLRewriter()
-					.on('font', coordParser);
-
-				await detailRewriter.transform(new Response(detailHtml)).text();
-				urlMap.set(url, coordParser.coordinates);
+				const detailsParser = new TfrDetailsParser();
+				const details = await detailsParser.parse(xmlText);
+				
+				urlMap.set(url, details);
 			});
 
 			await Promise.all(fetchPromises);
 
 			tableParser.tfrs.forEach(tfr => {
 				if (tfr.url) {
-					tfr.coordinates = urlMap.get(tfr.url) || [];
+					const details = urlMap.get(tfr.url);
+					tfr.coordinates = details.coordinates || [];
+					tfr.issueDate = details.issueDate;
+					tfr.location = details.location;
+					tfr.beginningDateTime = details.beginningDateTime;
+					tfr.endingDateTime = details.endingDateTime;
+					tfr.reason = details.reason;
+					console.log('Parsed details:', details);
+					console.log('Updated TFR:', tfr);
 				}
 			});
 
@@ -364,22 +457,24 @@ export default {
 						message: "No new TFRs found",
 						tweetsPosted: 0
 					}
+				}, {
+					headers: corsHeaders
 				});
 			}
 
 			// Post tweets for each new TFR
 			const tweetResults = [];
-			for (const tfr of updatedTfrs) {
-				const tweetText = formatTfrTweet(tfr);
-				const success = await postTweet(tfr, env);
-				if (success) {
-					tweetResults.push({
-						notam: tfr.notam,
-						tweetText: tweetText,
-						success: true
-					});
-				}
-			}
+			// for (const tfr of updatedTfrs) {
+			// 	const tweetText = formatTfrTweet(tfr);
+			// 	const success = await postTweet(tfr, env);
+			// 	if (success) {
+			// 		tweetResults.push({
+			// 			notam: tfr.notam,
+			// 			tweetText: tweetText,
+			// 			success: true
+			// 		});
+			// 	}
+			// }
 
 			return Response.json({
 				success: true,
@@ -387,13 +482,21 @@ export default {
 					message: `Posted ${tweetResults.length} tweets`,
 					tweets: tweetResults
 				}
+			}, {
+				headers: corsHeaders
 			});
 
 		} catch (error) {
+			console.error('Error in fetch handler:', error);
+			
 			return Response.json({
 				success: false,
-				error: error.message
-			}, { status: 500 });
+				error: error.message || 'Internal Server Error',
+				stack: error.stack // Remove this in production if you don't want to expose stack traces
+			}, { 
+				status: 500,
+				headers: corsHeaders
+			});
 		}
 	},
 };
