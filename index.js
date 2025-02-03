@@ -163,6 +163,16 @@ export default {
 	 */
 	async fetch(request, env, ctx) {
 		try {
+			// Check if we want stored TFRs only
+			if (request.url.endsWith('/stored')) {
+				const stored = await env.TFR_STORAGE.get('tfrs', { type: 'json' });
+				return Response.json({
+					success: true,
+					data: stored || []
+				});
+			}
+
+			// Fetch and parse new TFRs
 			const response = await fetch("https://tfr.faa.gov/tfr2/list.html");
 			const html = await response.text();
 
@@ -203,16 +213,29 @@ export default {
 			});
 
 			const updatedTfrs = await updateTfrJson(tableParser.tfrs, env);
+			
+			// Set CORS headers to allow access from any origin
+			const headers = new Headers({
+				'Access-Control-Allow-Origin': '*',
+				'Content-Type': 'application/json'
+			});
+
 			return Response.json({
 				success: true,
 				data: updatedTfrs
-			});
+			}, { headers });
 
 		} catch (error) {
 			return Response.json({
 				success: false,
 				error: error.message
-			}, { status: 500 });
+			}, { 
+				status: 500,
+				headers: {
+					'Access-Control-Allow-Origin': '*',
+					'Content-Type': 'application/json'
+				}
+			});
 		}
 	},
 };
