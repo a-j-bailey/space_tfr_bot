@@ -1,0 +1,8 @@
+name = "tfr-parser"
+main = "index.js"
+compatibility_date = "2023-01-01"
+
+[[kv_namespaces]]
+binding = "TFR_STORAGE"
+id = "79af157b84b74a4bb470121b47662009"
+preview_id = "your-preview-kv-id-here" 

@@ -124,6 +124,36 @@ class CoordinatesParser {
 	}
 }
 
+async function updateTfrJson(newTfrs, env) {
+	let existingTfrs = [];
+	try {
+		const stored = await env.TFR_STORAGE.get('tfrs', { type: 'json' });
+		console.log('Retrieved from KV:', stored ? stored.length : 0, 'TFRs');
+		existingTfrs = stored || [];
+	} catch (error) {
+		console.error('Error reading from KV:', error);
+		existingTfrs = [];
+	}
+
+	const mergedTfrs = [...existingTfrs];
+	for (const newTfr of newTfrs) {
+		const existingIndex = mergedTfrs.findIndex(tfr => tfr.notam === newTfr.notam);
+		if (existingIndex === -1) {
+			mergedTfrs.push(newTfr);
+		} else {
+			mergedTfrs[existingIndex] = newTfr;
+		}
+	}
+
+	try {
+		await env.TFR_STORAGE.put('tfrs', JSON.stringify(mergedTfrs));
+		console.log('Stored in KV:', mergedTfrs.length, 'TFRs');
+	} catch (error) {
+		console.error('Error writing to KV:', error);
+	}
+	return mergedTfrs;
+}
+
 export default {
 	/**
 	 * @param {Request} request
@@ -172,9 +202,10 @@ export default {
 				}
 			});
 
+			const updatedTfrs = await updateTfrJson(tableParser.tfrs, env);
 			return Response.json({
 				success: true,
-				data: tableParser.tfrs
+				data: updatedTfrs
 			});
 
 		} catch (error) {
