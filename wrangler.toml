@@ -13,6 +13,9 @@ command = ""
 [triggers]
 crons = ["*/30 * * * *"]  # Runs every 30 minutes
 
+[observability.logs]
+enabled = true
+
 [vars]
 # Environment variables will be loaded from .dev.vars for local development
 # and from Cloudflare dashboard for production

@@ -374,24 +374,6 @@ export default {
 	 * @returns {Promise<Response>}
 	 */
 	async fetch(request, env, ctx) {
-		return this.processTfrs(env);
-	},
-
-	/**
-	 * @param {ScheduledController} controller
-	 * @param {Env} env
-	 * @param {ExecutionContext} ctx
-	 */
-	async scheduled(controller, env, ctx) {
-		// This runs on the cron schedule
-		await this.processTfrs(env);
-	},
-
-	/**
-	 * @param {Env} env
-	 * @returns {Promise<Response>}
-	 */
-	async processTfrs(env) {
 		// Add CORS headers to all responses
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
@@ -418,6 +400,47 @@ export default {
 				});
 			}
 
+			const result = await this.processTfrs(env);
+			return Response.json({
+				success: true,
+				data: result
+			}, {
+				headers: corsHeaders
+			});
+		} catch (error) {
+			console.error('Error in fetch handler:', error);
+			return Response.json({
+				success: false,
+				error: error.message || 'Internal Server Error',
+				stack: error.stack
+			}, { 
+				status: 500,
+				headers: corsHeaders
+			});
+		}
+	},
+
+	/**
+	 * @param {ScheduledController} controller
+	 * @param {Env} env
+	 * @param {ExecutionContext} ctx
+	 */
+	async scheduled(controller, env, ctx) {
+		// This runs on the cron schedule
+		try {
+			const result = await this.processTfrs(env);
+			console.log('Cron job completed:', result);
+		} catch (error) {
+			console.error('Error in scheduled job:', error);
+		}
+	},
+
+	/**
+	 * @param {Env} env
+	 * @returns {Promise<Object>}
+	 */
+	async processTfrs(env) {
+		try {
 			// Fetch and parse new TFRs
 			const response = await fetch("https://tfr.faa.gov/tfr2/list.html");
 			const html = await response.text();
@@ -469,52 +492,33 @@ export default {
 			
 			// If no new TFRs, return early
 			if (updatedTfrs.length === 0) {
-				return Response.json({
-					success: true,
-					data: {
-						message: "No new TFRs found",
-						tweetsPosted: 0
-					}
-				}, {
-					headers: corsHeaders
-				});
+				return {
+					message: "No new TFRs found",
+					tweetsPosted: 0
+				};
 			}
 
 			// Post tweets for each new TFR
 			const tweetResults = [];
-			// for (const tfr of updatedTfrs) {
-			// 	const tweetText = formatTfrTweet(tfr);
-			// 	const success = await postTweet(tfr, env);
-			// 	if (success) {
-			// 		tweetResults.push({
-			// 			notam: tfr.notam,
-			// 			tweetText: tweetText,
-			// 			success: true
-			// 		});
-			// 	}
-			// }
-
-			return Response.json({
-				success: true,
-				data: {
-					message: `Posted ${tweetResults.length} tweets`,
-					tweets: tweetResults
+			for (const tfr of updatedTfrs) {
+				const success = await postTweet(tfr, env);
+				if (success) {
+					tweetResults.push({
+						notam: tfr.notam,
+						tweetText: formatTfrTweet(tfr),
+						success: true
+					});
 				}
-			}, {
-				headers: corsHeaders
-			});
+			}
 
+			return {
+				message: `Posted ${tweetResults.length} tweets`,
+				tweets: tweetResults,
+				newTfrs: updatedTfrs.length
+			};
 		} catch (error) {
-			console.error('Error in fetch handler:', error);
-			
-			return Response.json({
-				success: false,
-				error: error.message || 'Internal Server Error',
-				stack: error.stack // Remove this in production if you don't want to expose stack traces
-			}, { 
-				status: 500,
-				headers: corsHeaders
-			});
+			console.error('Error processing TFRs:', error);
+			throw error;
 		}
 	},
 };
