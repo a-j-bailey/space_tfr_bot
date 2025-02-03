@@ -252,10 +252,12 @@ function formatTfrTweet(tfr) {
 	// Format the TFR info into a tweet
 	const date = new Date(tfr.date).toLocaleDateString();
 	return `New Space Operations TFR:
-📍 ${tfr.state} - ${tfr.facility}
-🗓️ ${tfr.description}
-NOTAM: ${tfr.notam}
-More info: ${tfr.url}`;
+    🗓️ ${tfr.date}
+    📍 ${tfr.state} - ${tfr.facility}
+    --
+    ${tfr.description}
+    --
+    ${tfr.url}`;
 }
 
 async function updateTfrJson(newTfrs, env) {
