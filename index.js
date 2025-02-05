@@ -261,7 +261,7 @@ async function generateOAuthSignature(method, url, params, consumerSecret, token
 
 async function postTweet(tfr, env) {
 	const tweetText = formatTfrTweet(tfr);
-	console.log('Attempting to post tweet:', tweetText);
+	console.log('Attempting to post tweet:', tfr.notam);
 	
 	try {
 		const url = 'https://api.twitter.com/2/tweets';
@@ -304,8 +304,6 @@ async function postTweet(tfr, env) {
 		});
 
 		const responseText = await response.text();
-		console.log('Twitter API response status:', response.status);
-		console.log('Twitter API response:', responseText);
 
 		if (!response.ok) {
 			throw new Error(`Twitter API error: ${responseText}`);
@@ -483,8 +481,6 @@ export default {
 					tfr.beginningDateTime = details.beginningDateTime;
 					tfr.endingDateTime = details.endingDateTime;
 					tfr.reason = details.reason;
-					console.log('Parsed details:', details);
-					console.log('Updated TFR:', tfr);
 				}
 			});
 
