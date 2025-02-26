@@ -1,186 +1,81 @@
-/**
- * @typedef {Object} Env
- */
-
-class TableParser {
-	constructor() {
-		this.tfrs = [];
-		this.currentRow = {};
-		this.columnIndex = 0;
-		this.columns = ['date', 'notam', 'facility', 'state', 'type', 'description'];
-		this.inDataRow = false;
-		this.currentText = '';
-		this.isSpaceOperation = false;
-		this.currentUrl = '';
-	}
-
-	element(element) {
-		if (element.tagName === 'tr') {
-			const bgColor = element.getAttribute('bgcolor');
-			if (bgColor === 'ffffff' || bgColor === 'e7ffff') {
-				this.inDataRow = true;
-				this.currentRow = {};
-				this.columnIndex = 0;
-				this.isSpaceOperation = false;
-				this.currentUrl = '';
-			} else {
-				this.inDataRow = false;
-			}
-		}
-
-		if (element.tagName === 'a' && this.inDataRow && this.columnIndex < 6) {
-			if (this.columnIndex === 1) {
-				this.currentUrl = new URL(element.getAttribute('href'), 'https://tfr.faa.gov').href;
-			}
-			
-			this.currentText = '';
-			
-			element.onEndTag(() => {
-				const content = this.currentText.trim();
-				
-				if (content) {
-					let cleanContent;
-					
-					if (this.columnIndex === 0) {
-						const dateMatch = content.match(/\d{2}\/\d{2}\/\d{4}/) || 
-										 content.match(/\d{2}\/\d{2}\/\d{2}/) ||
-										 content.match(/\d{1,2}\/\d{1,2}\/\d{4}/);
-						cleanContent = dateMatch ? dateMatch[0] : content.trim();
-					} else if (this.columnIndex === 5) {
-						const lines = content.split(/[\r\n]+/)
-							.map(line => line.trim())
-							.filter(line => line.length > 2);
-						cleanContent = lines.reduce((a, b) => a.length > b.length ? a : b, '');
-					} else {
-						const parts = content.match(/(.+?)(?:\1+|$)/);
-						cleanContent = parts ? parts[1].trim() : content.trim();
-						if (cleanContent.length < 2) {
-							cleanContent = content.trim();
-						}
-						
-						if (this.columnIndex === 4 && cleanContent === 'SPACE OPERATIONS') {
-							this.isSpaceOperation = true;
-						}
-					}
-					
-					this.currentRow[this.columns[this.columnIndex]] = cleanContent;
-					this.columnIndex++;
-					
-					if (this.columnIndex === 6 && this.isSpaceOperation) {
-						this.currentRow.url = this.currentUrl;
-						this.tfrs.push({...this.currentRow});
-					}
-				}
-			});
-		}
-	}
-
-	text(text) {
-		if (this.inDataRow && this.columnIndex < 6) {
-			this.currentText += text.text;
-		}
-	}
-}
-
-// New class to parse coordinates from TFR detail pages
-class CoordinatesParser {
-	constructor() {
-		this.coordinates = [];
-		this.currentRow = [];
-		this.inArialFont = false;
-		this.currentText = '';
-	}
-
-	element(element) {
-		if (element.tagName === 'font' && element.getAttribute('face') === 'Arial') {
-			this.inArialFont = true;
-			this.currentText = '';
-			
-			element.onEndTag(() => {
-				this.inArialFont = false;
-				const content = this.currentText.trim()
-					.replace(/&#xBA;/g, '°')
-					.replace(/&#x2019;/g, "'");
-				
-				if (content.includes('°')) {
-					this.currentRow.push(content);
-					
-					if (this.currentRow.length === 2) {
-						this.coordinates.push({
-							lat: this.currentRow[0],
-							long: this.currentRow[1]
-						});
-						this.currentRow = [];
-					}
-				}
-			});
-		}
-	}
-
-	text(text) {
-		if (this.inArialFont) {
-			this.currentText += text.text;
-		}
-	}
-}
-
 class TfrDetailsParser {
 	constructor() {
 		this.details = {
-			issueDate: '',
-			location: '',
-			beginningDateTime: '',
-			endingDateTime: '',
-			reason: '',
+			mission_id: '',
+			mission_provider: '',
+			mission_name: '',
+			issue_date: '',
+			effective_date: '',
+			effective_tz: '',
+			expiry_date: '',
+			expiry_tz: '',
+			city: '',
+			state: '',
+			facility: '',
+			facility_code: '',
+			alt_min: 0,
+			alt_max: 0,
 			coordinates: [],
-			altitude: '',
-			authority: '',
-			artcc: '',
-			effectiveTimes: '',
-			notamNumber: ''
 		};
 	}
 
 	async parse(xmlText) {
+		function getProvider(mission) {
+			const providers = {
+				'SpaceX': ['SpaceX', 'SpX'],
+				'Blue Origin': ['Blue Origin'],
+				'ULA': ['ULA'],
+			}
+
+			let provider = '';
+
+			Object.keys(providers).forEach((key) => {
+				if (providers[key].some(option => mission.includes(option))) {
+					provider = key
+				}
+			})
+
+			return provider;
+		}
+
 		const getValue = (tag) => {
 			const match = xmlText.match(new RegExp(`<${tag}>([^<]+)</${tag}>`));
 			return match ? match[1].trim() : '';
 		};
 
-		// Basic NOTAM details
-		this.details.notamNumber = `FDC ${getValue('txtLocalName')}`;
-		this.details.issueDate = getValue('dateIssued');
-		
-		// Location details
-		const city = getValue('txtNameCity');
-		const state = getValue('txtNameUSState');
-		this.details.location = `${city}, ${state}`;
-		
-		// Times
-		this.details.beginningDateTime = getValue('dateEffective');
-		this.details.endingDateTime = getValue('dateExpire');
-		
-		// Altitude
-		const upperAlt = getValue('valDistVerUpper');
-		const lowerAlt = getValue('valDistVerLower');
-		this.details.altitude = `${lowerAlt}ft to FL${upperAlt}`;
+		const localName = getValue('txtLocalName')
+		this.details.mission_id = localName;
+		const parsed = localName.match(/^\d+([^()]+)\(/)
+		if (parsed) {
+			const provider = getProvider(parsed[1].trim())
+			const name = parsed[1].split(provider)
 
-		// Authority and facility
-		this.details.authority = getValue('codeType'); // Usually "91.143" for space ops
-		this.details.artcc = getValue('codeFacility');
-		
-		// Daily operation times
-		const scheduleMatch = xmlText.match(/<ScheduleGroup>[\s\S]*?<\/ScheduleGroup>/);
-		if (scheduleMatch) {
-			const startTime = scheduleMatch[0].match(/<startTime>([^<]+)<\/startTime>/)?.[1];
-			const endTime = scheduleMatch[0].match(/<endTime>([^<]+)<\/endTime>/)?.[1];
-			this.details.effectiveTimes = `${startTime} to ${endTime} UTC daily`;
+			this.details.mission_provider = provider;
+			this.details.mission_name = name[name.length - 1].trim();
 		}
+
+		this.details.issue_date = getValue('dateIssued');
+
+		// DATE / TIME
+		this.details.effective_date = getValue('dateEffective');
+		this.details.expiry_date = getValue('dateExpire');
+		this.details.effective_tz = getValue('codeTimeZone');
+		this.details.expiry_tz = getValue('codeExpirationTimeZone');
+
+		// LOCATION
+		this.details.city = getValue('txtNameCity');
+		this.details.state = getValue('txtNameUSState');
+
+		this.details.facility = getValue('txtNameCoordFacility');
+		this.details.facility_code = getValue('codeCoordFacility');
+
+		this.details.alt_min = parseInt(getValue('valDistVerLower'));
+		this.details.alt_max = parseInt(getValue('valDistVerUpper')) * 100;
 
 		// Extract coordinates from Avx tags
 		const coords = [];
 		const avxMatches = xmlText.match(/<Avx>[\s\S]*?<\/Avx>/g) || [];
-		
+
 		avxMatches.forEach(avx => {
 			const lat = avx.match(/<geoLat>([^<]+)<\/geoLat>/)?.[1];
 			const long = avx.match(/<geoLong>([^<]+)<\/geoLong>/)?.[1];
@@ -189,36 +84,10 @@ class TfrDetailsParser {
 				coords.push({ lat, long });
 			}
 		});
-		
+
 		this.details.coordinates = coords;
 
 		return this.details;
-	}
-}
-
-async function getTwitterAccessToken(env) {
-	try {
-		const credentials = `${env.TWITTER_CLIENT_ID}:${env.TWITTER_CLIENT_SECRET}`;
-		const basicAuth = btoa(credentials);
-		
-		const response = await fetch('https://api.twitter.com/2/oauth2/token', {
-			method: 'POST',
-			headers: {
-				'Authorization': `Basic ${basicAuth}`,
-				'Content-Type': 'application/x-www-form-urlencoded'
-			},
-			body: 'grant_type=client_credentials'
-		});
-
-		if (!response.ok) {
-			throw new Error(`OAuth error: ${await response.text()}`);
-		}
-
-		const data = await response.json();
-		return data.access_token;
-	} catch (error) {
-		console.error('Error getting Twitter access token:', error);
-		throw error;
 	}
 }
 
@@ -233,12 +102,12 @@ async function generateOAuthSignature(method, url, params, consumerSecret, token
 	].join('&');
 
 	const signingKey = `${encodeURIComponent(consumerSecret)}&${encodeURIComponent(tokenSecret)}`;
-	
+
 	// Convert strings to Uint8Arrays
 	const encoder = new TextEncoder();
 	const baseStringBytes = encoder.encode(baseString);
 	const signingKeyBytes = encoder.encode(signingKey);
-	
+
 	// Create HMAC key
 	const key = await crypto.subtle.importKey(
 		'raw',
@@ -247,22 +116,28 @@ async function generateOAuthSignature(method, url, params, consumerSecret, token
 		false,
 		['sign']
 	);
-	
+
 	// Sign the base string
 	const signature = await crypto.subtle.sign(
 		'HMAC',
 		key,
 		baseStringBytes
 	);
-	
+
 	// Convert to base64
 	return btoa(String.fromCharCode(...new Uint8Array(signature)));
 }
 
 async function postTweet(tfr, env) {
 	const tweetText = formatTfrTweet(tfr);
-	console.log('Attempting to post tweet:', tfr.notam);
-	
+
+	if (env.ENVIRONMENT !== 'production') {
+		// Don't tweet in non-production environments.
+		return true;
+	}
+
+	console.log('Attempting to post tweet:', tfr.notam_id);
+
 	try {
 		const url = 'https://api.twitter.com/2/tweets';
 		const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -309,7 +184,7 @@ async function postTweet(tfr, env) {
 			throw new Error(`Twitter API error: ${responseText}`);
 		}
 
-		console.log('Tweet posted successfully for TFR:', tfr.notam);
+		console.log('Tweet posted successfully for TFR:', tfr.notam_id);
 		return true;
 	} catch (error) {
 		console.error('Error posting tweet:', error);
@@ -319,18 +194,58 @@ async function postTweet(tfr, env) {
 }
 
 function formatTfrTweet(tfr) {
-	return `New Space Operations TFR:
-📍 ${tfr.location}
-🗓️ ${new Date(tfr.beginningDateTime).toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: 'numeric', minute: 'numeric', hour12: false })} UTC to ${new Date(tfr.endingDateTime).toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: 'numeric', minute: 'numeric', hour12: false })} UTC
---
-${tfr.description}
---
-${tfr.url}`;
+	const formatOptions = {
+		timeZone: tfr.effective_tz,
+		year: 'numeric',
+		month: 'short',
+		day: '2-digit',
+		hour: 'numeric',
+		minute: 'numeric',
+		timeZoneName: 'short',
+		hour12: false
+	}
+	const startTime = new Date(tfr.effective_date + '.000Z').toLocaleString('en-US', formatOptions)
+	const endTime = new Date(tfr.expiry_date + '.000Z').toLocaleString('en-US', formatOptions)
+
+	let content = `📍 ${tfr.city}, ${tfr.state}
+🗓️ ${startTime} to ${endTime}
+--`
+
+	if (tfr.mission_name) {
+		content += `\n🚀 ${tfr.mission_name}`
+	}
+
+	if (tfr.mission_provider) {
+		content += `\n🏢 ${tfr.mission_provider}`
+	}
+
+	return content + `\n--\n${getUrl(tfr.notam_id, 'public')}`;
 }
 
-async function updateTfrJson(newTfrs, env) {
+async function updateStoredTfrs(newTfrs, env) {
+	// let existingTfrs = await getStoredTfrs(env);
+
+	// const mergedTfrs = [...existingTfrs];
+	// newTfrs.forEach(newTfr => {
+	// 	if (!mergedTfrs.some(tfr => tfr.notam_id === newTfr.notam_id)) {
+	// 		mergedTfrs.push(newTfr);
+	// 	}
+	// })
+
+	console.log(newTfrs);
+
+	try {
+		await env.TFR_STORAGE.put('tfrs', JSON.stringify(newTfrs));
+		console.log('Stored in KV:', newTfrs.length, 'TFRs');
+	} catch (error) {
+		console.error('Error writing to KV:', error);
+	}
+
+	return newTfrs;
+}
+
+async function getStoredTfrs(env) {
 	let existingTfrs = [];
-	let addedTfrs = [];
 	try {
 		const stored = await env.TFR_STORAGE.get('tfrs', { type: 'json' });
 		console.log('Retrieved from KV:', stored ? stored.length : 0, 'TFRs');
@@ -340,28 +255,28 @@ async function updateTfrJson(newTfrs, env) {
 		existingTfrs = [];
 	}
 
-	const mergedTfrs = [...existingTfrs];
-	for (const newTfr of newTfrs) {
-		const existingIndex = mergedTfrs.findIndex(tfr => tfr.notam === newTfr.notam);
-		if (existingIndex === -1) {
-			// This is a new TFR
-			mergedTfrs.push(newTfr);
-			addedTfrs.push(newTfr);
-		} else {
-			// Update existing TFR but don't count as new
-			mergedTfrs[existingIndex] = newTfr;
-		}
-	}
+	return existingTfrs;
+}
 
-	try {
-		await env.TFR_STORAGE.put('tfrs', JSON.stringify(mergedTfrs));
-		console.log('Stored in KV:', mergedTfrs.length, 'TFRs');
-		console.log('New TFRs found:', addedTfrs.length);
-	} catch (error) {
-		console.error('Error writing to KV:', error);
-	}
+async function filterNewTfrs(allTFRs, env) {
+	let existingTfrs = await getStoredTfrs(env);
+	let newTfrs = []
 
-	return addedTfrs;  // Only return the new TFRs
+	newTfrs = allTFRs.filter(newTfr => !existingTfrs.some(existingTfr => existingTfr.notam_id === newTfr.notam_id));
+
+	return newTfrs;
+}
+
+function getUrl(notam_id, type) {
+	const notam = notam_id.split('/');
+	const detail = `detail_${notam[0]}_${notam[1]}`;
+
+	switch (type) {
+		case 'xml':
+			return `https://tfr.faa.gov/download/${detail}.xml`
+		case 'public':
+			return `https://tfr.faa.gov/tfr3/?page=${detail}`
+	}
 }
 
 export default {
@@ -411,7 +326,7 @@ export default {
 				success: false,
 				error: error.message || 'Internal Server Error',
 				stack: error.stack
-			}, { 
+			}, {
 				status: 500,
 				headers: corsHeaders
 			});
@@ -440,77 +355,62 @@ export default {
 	async processTfrs(env) {
 		try {
 			// Fetch and parse new TFRs
-			const response = await fetch("https://tfr.faa.gov/tfr2/list.html");
-			const html = await response.text();
+			const rawTFRs = await fetch("https://tfr.faa.gov/tfrapi/getTfrList")
+				.then(response => response.json());
 
-			const tableParser = new TableParser();
-			const rewriter = new HTMLRewriter()
-				.on('tr', tableParser)
-				.on('td', tableParser)
-				.on('a', tableParser);
+			const spaceOperationsTFRs = rawTFRs.filter(tfr => tfr.type === 'SPACE OPERATIONS');
 
-			await rewriter.transform(new Response(html)).text();
+			const newTfrs = await filterNewTfrs(spaceOperationsTFRs, env)
 
-			const urlMap = new Map();
-			
-			tableParser.tfrs.forEach(tfr => {
-				if (tfr.url && !urlMap.has(tfr.url)) {
-					urlMap.set(tfr.url, null);
-				}
-			});
-
-			const fetchPromises = Array.from(urlMap.keys()).map(async url => {
-				const xmlUrl = url.replace('.html', '.xml');
-				const response = await fetch(xmlUrl);
-				const xmlText = await response.text();
-
-				const detailsParser = new TfrDetailsParser();
-				const details = await detailsParser.parse(xmlText);
-				
-				urlMap.set(url, details);
-			});
-
-			await Promise.all(fetchPromises);
-
-			tableParser.tfrs.forEach(tfr => {
-				if (tfr.url) {
-					const details = urlMap.get(tfr.url);
-					tfr.coordinates = details.coordinates || [];
-					tfr.issueDate = details.issueDate;
-					tfr.location = details.location;
-					tfr.beginningDateTime = details.beginningDateTime;
-					tfr.endingDateTime = details.endingDateTime;
-					tfr.reason = details.reason;
-				}
-			});
-
-			const updatedTfrs = await updateTfrJson(tableParser.tfrs, env);
-			
 			// If no new TFRs, return early
-			if (updatedTfrs.length === 0) {
+			if (newTfrs.length === 0) {
 				return {
 					message: "No new TFRs found",
 					tweetsPosted: 0
 				};
 			}
 
+			const tfrMap = new Map();
+
+			newTfrs.forEach(tfr => {
+				if (tfr && !tfrMap.has(tfr.notam_id)) {
+					tfrMap.set(tfr.notam_id, tfr);
+				}
+			});
+
+			const promises = newTfrs.map(async tfr => {
+				const response = await fetch(getUrl(tfr.notam_id, 'xml'));
+				const xmlText = await response.text();
+
+				const detailsParser = new TfrDetailsParser();
+				const details = await detailsParser.parse(xmlText);
+
+				tfrMap.set(tfr.notam_id, { ...tfr, ...details });
+			})
+
+			await Promise.all(promises);
+
 			// Post tweets for each new TFR
 			const tweetResults = [];
-			for (const tfr of updatedTfrs) {
+
+			tfrMap.forEach(async (tfr) => {
 				const success = await postTweet(tfr, env);
 				if (success) {
 					tweetResults.push({
-						notam: tfr.notam,
+						notam: tfr.notam_id,
 						tweetText: formatTfrTweet(tfr),
 						success: true
 					});
 				}
-			}
+				return;
+			});
+
+			await updateStoredTfrs(Array.from(tfrMap.values()), env)
 
 			return {
 				message: `Posted ${tweetResults.length} tweets`,
 				tweets: tweetResults,
-				newTfrs: updatedTfrs.length
+				newTfrs: newTfrs.length
 			};
 		} catch (error) {
 			console.error('Error processing TFRs:', error);
