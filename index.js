@@ -22,7 +22,7 @@ class TfrDetailsParser {
 	async parse(xmlText) {
 		function getProvider(mission) {
 			const providers = {
-				'SpaceX': ['SpaceX', 'SpX'],
+				'SpaceX': ['SpaceX', 'SpX', 'SpaveX'],
 				'Blue Origin': ['Blue Origin'],
 				'ULA': ['ULA'],
 			}
@@ -48,10 +48,11 @@ class TfrDetailsParser {
 		const parsed = localName.match(/^\d+([^()]+)\(/)
 		if (parsed) {
 			const provider = getProvider(parsed[1].trim())
-			const name = parsed[1].split(provider)
+			const name = parsed[1].trim().split(provider)
+			const mission_name = provider ? name[name.length - 1].trim() : parsed[1].trim()
 
 			this.details.mission_provider = provider;
-			this.details.mission_name = name[name.length - 1].trim();
+			this.details.mission_name = mission_name;
 		}
 
 		this.details.issue_date = getValue('dateIssued');
@@ -208,8 +209,7 @@ function formatTfrTweet(tfr) {
 	const endTime = new Date(tfr.expiry_date + '.000Z').toLocaleString('en-US', formatOptions)
 
 	let content = `📍 ${tfr.city}, ${tfr.state}
-🗓️ ${startTime} to ${endTime}
---`
+🗓️ ${startTime} to ${endTime}\n`
 
 	if (tfr.mission_name) {
 		content += `\n🚀 ${tfr.mission_name}`
@@ -219,7 +219,7 @@ function formatTfrTweet(tfr) {
 		content += `\n🏢 ${tfr.mission_provider}`
 	}
 
-	return content + `\n--\n${getUrl(tfr.notam_id, 'public')}`;
+	return content + `\n\n${getUrl(tfr.notam_id, 'public')}`;
 }
 
 async function updateStoredTfrs(newTfrs, env) {
