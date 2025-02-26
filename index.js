@@ -223,6 +223,17 @@ function formatTfrTweet(tfr) {
 }
 
 async function updateStoredTfrs(newTfrs, env) {
+	// let existingTfrs = await getStoredTfrs(env);
+
+	// const mergedTfrs = [...existingTfrs];
+	// newTfrs.forEach(newTfr => {
+	// 	if (!mergedTfrs.some(tfr => tfr.notam_id === newTfr.notam_id)) {
+	// 		mergedTfrs.push(newTfr);
+	// 	}
+	// })
+
+	console.log(newTfrs);
+
 	try {
 		await env.TFR_STORAGE.put('tfrs', JSON.stringify(newTfrs));
 		console.log('Stored in KV:', newTfrs.length, 'TFRs');
