@@ -233,8 +233,8 @@ async function updateStoredTfrs(newTfrs, env) {
 	})
 
 	try {
-		await env.TFR_STORAGE.put('tfrs', JSON.stringify(newTfrs));
-		console.log('Stored in KV:', newTfrs.length, 'TFRs');
+		await env.TFR_STORAGE.put('tfrs', JSON.stringify(mergedTfrs));
+		console.log('Stored in KV:', mergedTfrs.length, 'TFRs');
 	} catch (error) {
 		console.error('Error writing to KV:', error);
 	}
