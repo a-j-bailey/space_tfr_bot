@@ -38,6 +38,27 @@ class TfrDetailsParser {
 			return provider;
 		}
 
+		function parseMission(localName) {
+			let missionData = {
+				provider: '',
+				mission_name: ''
+			}
+
+			const parsed = localName.match(/^\d+([^()]+)\(/)
+			if (parsed) {
+				missionData.provider = getProvider(parsed[1].trim())
+				const name = parsed[1].trim().split(missionData.provider)
+				missionData.mission_name = missionData.provider ? name[name.length - 1].trim() : parsed[1].trim()
+			} else {
+				missionData.provider = getProvider(localName.trim())
+				const name = localName.trim().split(missionData.provider)
+				missionData.mission_name = missionData.provider ? name[name.length - 1].trim() : localName.trim()
+			}
+
+			return missionData
+			
+		}
+
 		const getValue = (tag) => {
 			const match = xmlText.match(new RegExp(`<${tag}>([^<]+)</${tag}>`));
 			return match ? match[1].trim() : '';
@@ -45,15 +66,10 @@ class TfrDetailsParser {
 
 		const localName = getValue('txtLocalName')
 		this.details.mission_id = localName;
-		const parsed = localName.match(/^\d+([^()]+)\(/)
-		if (parsed) {
-			const provider = getProvider(parsed[1].trim())
-			const name = parsed[1].trim().split(provider)
-			const mission_name = provider ? name[name.length - 1].trim() : parsed[1].trim()
 
-			this.details.mission_provider = provider;
-			this.details.mission_name = mission_name;
-		}
+		const missionData = parseMission(localName);
+		this.details.mission_provider = missionData.provider;
+		this.details.mission_name = missionData.mission_name;
 
 		this.details.issue_date = getValue('dateIssued');
 
